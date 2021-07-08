@@ -1,0 +1,484 @@
+/*  
+Problem : 311 is a non-emergency number that residents in many 
+cities can call to find information about services or 
+report an issue. Choose a city to work with and make 
+recommendations on how to improve time-to-close tickets. */
+
+/* Data Dictionary
+Request ID	INT 				Unique identifier of a Service Request (SR) in the open data set
+Created Date Date w/ timezone	Date SR  was created
+Closed Date	Date 				SR was closed by responding agency
+Agency_code	text				Acronym of responding City Government Agency
+Responsible Agency	text 		Full Agency name of responding City Government Agency
+request_details		text		This is  associated to the Complaint Type, and provides further detail on the incident or condition. Descriptor values are dependent on the Complaint Type, and are not always required in SR. 
+Status				xtext 		Status of SR submitted 
+LocationType	text			Describes the type of location used in the address information 
+Address 		text			House number of incident address provided by submitter.
+Cross Street 	text 			Cross street based on the geo validated incident location
+City	text 					City of the incident location provided by geovalidation.
+Landmark	text				If the incident location is identified as a Landmark the name of the landmark will display here
+Facility Type	text			If available, this field describes the type of city facility associated to the SR
+Community Board	ID text			Provided by geovalidation.
+Borough			text			Provided by the submitter and confirmed by geovalidation.
+Latitude		numeric			Geo based Lat of the incident location
+Longitude		numeric			Geo based Long of the incident location
+
+>> CITY : New York
+>> YEAR FOCUSED : 2019 
+
+We mostly analyzed the year 2019. 
+We used the other year tables to find a collective number in some of the questions.
+*/
+
+-- TABLES USED --
+-- Check fields of table for NYC 311 limit to 10
+SELECT * FROM nyc_311_2016 LIMIT 10;
+SELECT * FROM nyc_311_2017 LIMIT 10;
+SELECT * FROM nyc_311_2018 LIMIT 10;
+SELECT * FROM nyc_311_2019 LIMIT 10; 
+SELECT * FROM nyc_311_2020 LIMIT 10;  -- decided to not use 2020 because it is incomplete
+SELECT * FROM nyc_311_reference LIMIT 10;
+
+------ DATA CLEANING ------
+-- Found that in 2019, without DISTINCT, there were 2460160 affected
+-- With DISTINCT, it was 2456955
+SELECT DISTINCT request_id 
+FROM nyc_311_2019;
+-- Confirmed that there are around 3205 rows that had duplicate request_ids
+SELECT request_id, COUNT(*)
+FROM nyc_311_2019
+GROUP BY 1
+HAVING COUNT(*) > 1;
+-- Spot checked request_id
+SELECT *
+FROM nyc_311_2019
+WHERE request_id = 45069517;
+-- Spot checked request_id
+SELECT *
+FROM nyc_311_2019
+WHERE request_id = 45069866;
+
+/* Question 1 - 
+	How many requests did the 311 in New York get from 2016-2019? 
+	*/
+
+SELECT date_part('year', created_date),
+	COUNT(DISTINCT request_id)
+FROM nyc_311_2016
+GROUP BY 1
+UNION
+SELECT date_part('year', created_date),
+	COUNT(DISTINCT request_id)
+FROM nyc_311_2017
+GROUP BY 1
+UNION
+SELECT date_part('year', created_date),
+	COUNT(DISTINCT request_id)
+FROM nyc_311_2018
+GROUP BY 1
+UNION
+SELECT date_part('year', created_date),
+	COUNT(DISTINCT request_id)
+FROM nyc_311_2019
+GROUP BY 1;
+-- Didn't include 2020 because it only features until April 
+/* 2018 received the highest number of ticket request totaling in 2,747,651 which is 
+ almost 250k more than the rest. */
+
+/* Question 2 - 
+	From 2016-2019, which departments received the most number of requests?
+	 */
+SELECT responsibleagency,
+	SUM(total_num) AS total_num
+FROM (
+	SELECT responsibleagency,
+		COUNT(DISTINCT request_id) AS total_num
+	FROM nyc_311_2016
+	GROUP BY 1
+	UNION
+	SELECT responsibleagency,
+		COUNT(DISTINCT request_id) AS total_num
+	FROM nyc_311_2017
+	GROUP BY 1
+	UNION
+	SELECT responsibleagency,
+		COUNT(DISTINCT request_id) AS total_num
+	FROM nyc_311_2018
+	GROUP BY 1
+	UNION
+	SELECT responsibleagency,
+		COUNT(DISTINCT request_id) AS total_num
+	FROM nyc_311_2019
+	GROUP BY 1) AS T1
+GROUP BY 1
+ORDER BY 2 desc
+;
+
+
+/* To get a better understanding of the result, we can include it here to showcase
+the difference from one another. 
+responsibleagency									total_num
+New York City Police Department						3006805
+Department of Housing Preservation and Development	2243825
+Department of Transportation						1158728
+Department of Environmental Protection				765838
+Department of Buildings								524990
+Department of Sanitation							462909
+Department of Parks and Recreation					419688
+Department of Health and Mental Hygiene				262640
+Taxi and Limousine Commission						120797
+Operations Unit - Department of Homeless Services	96288
+-- To present, I have downloaded the result of the query to excel and made a bar graph
+where it highlights the New York City Police Department as the top requested department.
+
+From 2016-2019, the New York Police Department (NYPD) received the most request with
+	over 3 million which is almost triple as the agency that got the 3rd most number.  */
+
+/* Question 3 - Mid-Analysis Questions/FOLLOW UP - 	
+	What types of request did NYPD mostly get? Are they ones that require 
+	a lot of department resources? 
+	*/
+
+SELECT requesttype, 
+		COUNT(DISTINCT request_id) AS total_num_in_2019
+FROM nyc_311_2019
+WHERE responsibleagency = 'New York City Police Department' 
+GROUP BY 1
+ORDER BY 2 desc;
+/* For visualization, we grouped all the noise complaints together and vehicle related 
+ticket requests together.
+
+In 2019 alone, the RESULT were all types of requests that could be resolved 
+in a matter of hour/s. We look further with this query by looking into 
+the average time they get resolved. We will find the average time-to-close by
+request type to confirm our assumption. */
+SELECT requesttype,
+		COUNT(DISTINCT request_id) AS total_num_req_2019,
+		AVG(AGE(closed_date, created_date))AS avg_time_tix_opened_2019 -- looking at difference
+FROM nyc_311_2019 -- could change this to see yearly difference
+WHERE closed_date IS NOT NULL -- this will eliminate any requests that are still open
+	AND responsibleagency = 'New York City Police Department'
+GROUP BY 1 
+ORDER BY 2 desc;
+/* Looking deeper into the results for the NYCPD, using the 2019 data,
+most of their ticket requests can be fixed within hours.
+requesttype		total_num_req_2019	avg_time_tix_opened_2019     
+"Noise - Residential"		232616	"06:43:49.523733"
+"Illegal Parking"			197767	"08:57:07.364692"
+"Blocked Driveway"			137613	"09:48:49.967575"
+"Noise - Street/Sidewalk"	97835	"06:41:31.387594"
+"Noise - Vehicle"			43061	"05:38:54.659835" 
+
+************************
+One RECOMMENDATION from this analysis, NYCPD Police Officers can schedule patrols around
+the city so we can reduce the amount of time to resolve these tickets.
+
+Another RECOMMENDATION to help noise complaints would be structuring a NEIGHBORHOOD WATCH
+to have the local police department and the different neighborhood work together 
+to reduce these types of requests therefore having more time into other requests. 
+The community can organize their own volunteers and form a team.
+************************
+*/
+
+/* QUESTION 4 - Mid-Analysis FOLLOW UP QUESTION - 
+	How do we know which area would need more help? 
+	*/
+
+SELECT ref.borough,
+		count(DISTINCT nt.request_id) AS total_count,
+		ROUND(COUNT(DISTINCT nt.request_id) / SUM(COUNT(DISTINCT nt.request_id)) OVER (),2) AS "% of total"
+FROM nyc_311_2019 nt
+JOIN nyc_311_reference ref ON UPPER(nt.communityboardid) = UPPER(ref.communityboardid)
+WHERE nt.responsibleagency = 'New York City Police Department'
+GROUP BY 1
+ORDER BY 2 desc;
+/* We can also delegate the police officers based of the demand per borough.
+borough         # of req    % of total
+"Brooklyn"		259981        31%
+"Queens"		229936        28%
+"Manhattan"		161516        19%
+"Bronx"			151456        18%
+"Staten Island"	30392          4%
+
+************************
+We can see that BROOKLYN and QUEENS has the most of ticket request to the NYCPD.
+We can recommend that the NYCPD delagate more patrol around those areas compared to 
+Staten Island which would not need as many.
+************************
+*/
+
+/* Question 5 -  
+	How is the average time-to-close compared by top 
+	requested departments in 2019? 
+	*/
+
+SELECT responsibleagency,
+		COUNT(DISTINCT request_id) AS total_num_req,
+		AVG(AGE(closed_date, created_date))AS avg_time_tickets_opened_2019 -- looking at average age
+FROM nyc_311_2019 -- could change this to see yearly difference
+WHERE closed_date IS NOT NULL
+GROUP BY 1 
+ORDER BY 2 desc;
+
+/* We included the TOP 8 results of the query - organized by total number of request
+	responsibleagency						total_num_req	avg_time_tickets_opened_2019
+New York City Police Department						839897	59:29.9
+Department of Housing Preservation and Development	464176	9 days 28:15:34.473306
+Department of Transportation						277671	11 days 30:02:38.473181
+Department of Environmental Protection				177287	3 days 26:02:17.315155
+Department of Sanitation							133746	17 days 34:04:04.505691
+Department of Buildings								125456	33 days 18:10:06.004604
+Department of Parks and Recreation					74686	1 mon 11 days 15:22:37.150233
+Department of Health and Mental Hygiene				48879	33 days 21:59:09.668446 
+-- We included beyond the top 5 because we can see some correlation within the total
+number of request in 2019 and the average time-to-close. We see that those requests from
+the Departments of Buildings, Park and Rec and lastly, Health and Mental
+Hygiene has an average time-to-close tickets to around a month. 
+
+-- We can focus on a department and analyze the type of requests it had for the 
+year of 2019 
+>> DEPT to focus: DEPARTMENT OF PARKS AND RECREATION*/
+
+/* Question 6 - FOLLOW UP/ MID-ANALYSIS 
+ 	What type of requests do people commonly file that takes time to resolve? 
+ 
+ We filtered to find the type/category of requests the DEPARTMENT OF PARKS AND RECREATION
+ had as they received the longest average time-to-close tickets within the top 8. */
+
+SELECT requesttype,
+		COUNT(DISTINCT request_id) AS total_num_req_2019
+FROM nyc_311_2019
+WHERE responsibleagency = 'Department of Parks and Recreation'
+GROUP BY 1
+ORDER BY 2 desc;
+
+/* requesttypes         total_num_req_2019
+Damaged Tree			26283
+New Tree Request		17464
+Maintenance or Facility	15250
+Overgrown Tree/Branches	14465
+Dead/Dying Tree			10007
+We saw the result that the Department of Parks and Recreation (DPR) does not have
+any request that overpowers the others. They were all relatively close to each other.
+A lot of request types involve replacing damaged or old trees 
+or just planting new ones. */
+
+/* Now, we can narrow down the result into requests that took more than 30 days to close 
+ We can organize and see how much that is compared to the other length of requests
+ the DPR received in 2019 */
+SELECT request_length, 
+		COUNT(DISTINCT request_id) AS total_num,
+		ROUND(COUNT(DISTINCT request_id) / SUM(COUNT(DISTINCT request_id)) OVER (),2) AS "% of total" -- displays the % of the total
+FROM 
+	(SELECT DISTINCT request_id,
+	 	CASE 
+			WHEN AVG(AGE(closed_date, created_date)) > INTERVAL '30 days' THEN 'Long'
+			WHEN AVG(AGE(closed_date, created_date)) > INTERVAL '14 days' THEN 'Normal'
+	 		WHEN AVG(AGE(closed_date, created_date)) > INTERVAL '7 days' THEN 'Short'
+	 		ELSE 'Quick'
+		END as request_length
+	 FROM nyc_311_2019
+	WHERE responsibleagency ='Department of Parks and Recreation'
+	GROUP BY 1) AS request_length
+GROUP BY 1 
+ORDER BY 2 DESC;
+/* According to the results, there are 26,540 long requests which consists of about 
+a quarter of the total requests, but 61,067 tickets were quick to be resolved. 
+*/ 
+
+/* Question 7 - FOLLOW UP
+	What kind of requests usually take more than a month to get resolved?
+	*/
+
+SELECT requesttype,
+		COUNT(DISTINCT request_id) AS total_num
+FROM nyc_311_2019
+WHERE responsibleagency = 'Department of Parks and Recreation' 
+	AND (AGE(closed_date, created_date)) > INTERVAL '30 days'
+GROUP BY 1
+ORDER BY 2 desc;
+/* Looking at the requests that exceeded 30 days, the top results remained consistent 
+as the analysis when we did not filter them. 
+requesttypes           total_num
+Damaged Tree			7254
+Maintenance or Facility	5326
+Dead/Dying Tree			3871
+Overgrown Tree/Branches	3829
+New Tree Request		3249 
+-- However, New Tree Requests synced down quite a bit compared to the other requests
+*/
+
+/* Question 8 - FOLLOW UP
+	To dig deeper with the NEW TREE REQUESTS, not limited to 30 days, 
+	what were the results by the department?  
+	*/
+
+SELECT request_details,
+		COUNT(DISTINCT request_id)
+FROM nyc_311_2019
+WHERE requesttype = 'New Tree Request'
+GROUP BY 1 
+ORDER BY 2 desc;
+
+----- Comparison to more than 30 days
+
+SELECT request_details,
+		COUNT(DISTINCT request_id)
+FROM nyc_311_2019
+WHERE requesttype = 'New Tree Request'
+	AND (AGE(closed_date, created_date)) > INTERVAL '30 days'
+GROUP BY 1 
+ORDER BY 2 desc;
+/* Out of 17464 New Tree Requests in 2019, the DPR only planted 64 trees and 58 of 
+that are all have been processing for more than 30 days. There are 
+multiple reasons why they just cannot plant trees in areas the requests asked, but the
+total number of completed requests are pretty low. Majority of the requests are 
+being reviewed, but that is one of the reasons why DPR has a longer time-to-close rate.
+
+************************
+According to the 311 NYC website, DPR can take up to 2 years to just inspect requested 
+locations and they even have to wait until the right season to fulfill the actual
+tree planting. 
+We can encourage a more community involvement from the people in New York by 
+RECOMMENDING them to getting involved in planting trees. DPR should also educate the citizens 
+of New York of what kind of environment is safe to plant trees. 
+https://www.milliontreesnyc.org/html/plant/volunteer.shtml
+************************
+
+/* Question 9 - 
+	In the year 2019, What is DPR's distribution of completed tasks, 
+	tasks that were unable to be completed and tasks that was deemed work 
+	was not necessary for tickets that went over 30 days?
+	 */
+
+SELECT was_fixed,
+		COUNT(DISTINCT request_id) as total_sum,
+		ROUND(COUNT(DISTINCT request_id) / SUM(COUNT(DISTINCT request_id)) OVER (),2) AS "% of total"
+FROM(
+		SELECT request_id,
+		CASE 
+			WHEN request_details LIKE '%performed%' OR request_details LIKE '%completed%' THEN 'Completed' /* We included request details that
+			 included the words "performed or completed" just to showcase the requests that the department handled*/ 
+			WHEN lower(request_details) LIKE '%no action&' OR lower(request_details) LIKE '%no work%' THEN 'Nothing Wrong' /* We included request details 
+			 that included the words "no action or no work" to showcase requests that had no problems and the trees were still good enough */
+			ELSE 'Did Not Fix' -- Requests that the department could not perform because of criteria they implement to determine
+			END AS was_fixed
+		FROM nyc_311_2019
+		WHERE responsibleagency = 'Department of Parks and Recreation' 
+		AND (AGE(closed_date, created_date)) > INTERVAL '30 days'
+		GROUP BY 1,2) AS T1
+GROUP BY 1
+ORDER BY 2 desc;
+/* Around 44% of the requests were completed by the DPR and closely behind, 43% were
+not probable for a solution because of circumstances deemed by the department. 
+The rest were good/healthy enough to be left alone */
+
+/* Question 10 - 
+	Which sources do most of NYC use when they submit 311 request tickets?
+	 */
+
+-- First, we want to look how the results were from 2016-2019.
+SELECT source,
+	SUM(total_num)
+FROM
+	(SELECT source,
+	 COUNT(DISTINCT request_id) AS total_num
+	FROM nyc_311_2016
+	 GROUP BY 1
+	UNION
+	SELECT source,
+	 COUNT(DISTINCT request_id) AS total_num
+	FROM nyc_311_2017
+	 GROUP BY 1
+	UNION
+	SELECT source,
+	 COUNT(DISTINCT request_id) AS total_num
+	FROM nyc_311_2018
+	 GROUP BY 1
+	UNION
+	SELECT source,
+	 COUNT(DISTINCT request_id) AS total_num
+	FROM nyc_311_2019
+	GROUP BY 1) AS T1
+GROUP BY 1
+ORDER BY 2 desc;
+
+-- How did 2019 do compared to the overall total?
+SELECT source,
+	COUNT(DISTINCT request_id) AS total_num_in_2019,
+	ROUND(COUNT(DISTINCT request_id) / SUM(COUNT(DISTINCT request_id)) OVER (),2) AS "%_of_total"
+FROM nyc_311_2019
+GROUP BY 1
+ORDER BY 2 desc;
+/* The most common source of requests in 2019 is PHONE with 113.7k - 46% of the total 
+which is more than twice as the second most common, ONLINE. 
+
+Question 11 - FOLLOW UP
+	Which departments specifically gets the most requests by these different sources?
+	*/
+
+SELECT responsibleagency, 
+	source,
+	COUNT(DISTINCT request_id) AS total_num_in_2019
+FROM nyc_311_2019
+GROUP BY 1,2
+ORDER BY 3 desc;
+LIMIT 10;
+/* As expected, the NYCPD had the most request overall, but limiting it to the top 10
+repsonses, we are aiming to see if the top departments also has PHONE for the top source.
+For the results, almost every different department has been grouped to show that they
+get the most requests by PHONE.
+
+However, both Department of Transportation and Buildings have UNKNOWN as their source. 
+*/
+SELECT *
+FROM nyc_311_2019
+WHERE responsibleagency ='Department of Transportation' AND UPPER(source) ='UNKNOWN';
+-- 
+SELECT *
+FROM nyc_311_2019
+WHERE responsibleagency ='Department of Buildings' AND UPPER(source) ='UNKNOWN';
+/* After reviewing both query results, the data output seemed to show internal input of 
+entries to have the problem set as a ticket. */
+
+/* Question 12- 
+	What is the average time to close tickets in 2019 by source?
+	 */
+
+SELECT source,
+	COUNT(DISTINCT request_id) AS total_num_in_2019,
+	AVG(AGE(CAST(closed_date AS date), CAST(created_date AS date))AS avg_time_tix_closed_2019
+FROM nyc_311_2019
+WHERE closed_date IS NOT NULL
+GROUP BY 1
+ORDER BY 2 desc;
+/* Organizing the output by the total number of request per source, we determined that
+phone, online and mobile all have relatively close average time to close.
+source	total_num_in_2019	avg_time_tix_opened_2019
+PHONE	1137789				7 days 21:03:42.895931
+ONLINE	546213				6 days 26:14:12.563281
+UNKNOWN	400637				19 days 30:47:41.715797
+MOBILE	363874				6 days 28:31:48.675889
+OTHER	8442				16 days 27:25:05.186502 
+The main website only promotes the three methods mentioned above. Unknown and Other are
+a collection of requests that cannot be fully determined solely by the data given. 
+After lookinginto some requests, some were opened and closed after a minute. 
+It seems like some requests were only opened for the record that it was investigated 
+rather than it being called/requested by someone in the community.  
+
+************************
+Just looking at 2019 alone, we can determine that request by PHONE needs more help. 
+By the quantity of request and how the average time-to-close is longer than both online
+and mobile, I can RECOMMEND that they do need to shift the focus more on phone requests.
+PHONE is the most accessible for people as it does not require any internet connection 
+or have the requester be tech-savvy. 
+ */
+
+
+
+
+
+
+
+
+
